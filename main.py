@@ -29,7 +29,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text(
-                "Неверный код. Пожалуйста, введите правильный код (1808)."
+                "Неверный код. Пожалуйста, введите правильный код (УЗНАТЬ ЕГО МОЖНО У ВАШЕГО ВС/РГ)."
             )
     elif user_states[user_id] == 1:  # Ожидание табельного номера
         try:
