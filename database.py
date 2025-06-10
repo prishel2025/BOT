@@ -1,14 +1,25 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 def init_db():
     conn = sqlite3.connect("premiums.db")
     cursor = conn.cursor()
     
-    # Создаем таблицу, если она еще не существует
+    # Создаем таблицу премий, если она еще не существует
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS premiums (
             tab_number INTEGER PRIMARY KEY,
             premium REAL NOT NULL
+        )
+    """)
+    
+    # Создаем таблицу для отслеживания запросов
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lookup_limits (
+            tab_number INTEGER,
+            lookup_count INTEGER DEFAULT 0,
+            last_reset DATE,
+            PRIMARY KEY (tab_number)
         )
     """)
     
@@ -226,8 +237,37 @@ def get_premium(tab_number):
     conn = sqlite3.connect("premiums.db")
     cursor = conn.cursor()
     
-    cursor.execute("SELECT premium FROM premiums WHERE tab_number = ?", (tab_number,))
+    # Проверяем лимит запросов
+    current_date = datetime.now().date()
+    cursor.execute("SELECT lookup_count, last_reset FROM lookup_limits WHERE tab_number = ?", (tab_number,))
     result = cursor.fetchone()
     
+    if result:
+        lookup_count, last_reset = result
+        if last_reset != current_date:
+            lookup_count = 0
+            cursor.execute("UPDATE lookup_limits SET lookup_count = ?, last_reset = ? WHERE tab_number = ?", 
+                          (lookup_count, current_date, tab_number))
+        if lookup_count >= 6:
+            next_reset = datetime.combine(current_date, datetime.min.time()) + timedelta(days=1)
+            wait_time = next_reset - datetime.now()
+            conn.close()
+            return f"Превышен лимит запросов (6 за сутки). Подождите {wait_time.seconds // 3600} часов {(wait_time.seconds % 3600) // 60} минут."
+    else:
+        cursor.execute("INSERT INTO lookup_limits (tab_number, last_reset) VALUES (?, ?)", (tab_number, current_date))
+        lookup_count = 0
+    
+    # Увеличиваем счетчик запросов
+    cursor.execute("UPDATE lookup_limits SET lookup_count = lookup_count + 1 WHERE tab_number = ?", (tab_number,))
+    
+    # Получаем премию
+    cursor.execute("SELECT premium FROM premiums WHERE tab_number = ?", (tab_number,))
+    premium_result = cursor.fetchone()
+    
+    conn.commit()
     conn.close()
-    return result[0] if result else None
+    return premium_result[0] if premium_result else "Табельный номер не найден"
+
+# Инициализация базы данных при первом запуске
+if __name__ == "__main__":
+    init_db()
