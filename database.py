@@ -252,7 +252,7 @@ def get_premium(tab_number):
             next_reset = datetime.combine(current_date, datetime.min.time()) + timedelta(days=1)
             wait_time = next_reset - datetime.now()
             conn.close()
-            return f"Превышен лимит запросов (6 за сутки). Подождите {wait_time.seconds // 3600} часов {(wait_time.seconds % 3600) // 60} минут."
+            return (f"Превышен лимит запросов (6 за сутки). Подождите {wait_time.seconds // 3600} часов {(wait_time.seconds % 3600) // 60} минут.",)
     else:
         cursor.execute("INSERT INTO lookup_limits (tab_number, last_reset) VALUES (?, ?)", (tab_number, current_date))
         lookup_count = 0
@@ -266,7 +266,7 @@ def get_premium(tab_number):
     
     conn.commit()
     conn.close()
-    return premium_result[0] if premium_result else "Табельный номер не найден"
+    return (premium_result[0],) if premium_result else ("Табельный номер не найден",)
 
 # Инициализация базы данных при первом запуске
 if __name__ == "__main__":
