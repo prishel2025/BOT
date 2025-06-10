@@ -1,4 +1,6 @@
 import sqlite3
+import time
+from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from config import TOKEN
@@ -6,6 +8,59 @@ from database import init_db, get_premium
 
 # Состояние пользователя (0 - ожидание кода, 1 - ожидание табельного номера)
 user_states = {}
+
+# Инициализация базы данных с таблицей для отслеживания запросов
+def init_db_with_limit():
+    conn = sqlite3.connect('premiums.db')
+    c = conn.cursor()
+    # Создаем таблицу для хранения запросов пользователей
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS user_requests (
+            user_id INTEGER,
+            request_time REAL,
+            PRIMARY KEY (user_id, request_time)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    init_db()  # Вызываем оригинальную функцию инициализации базы данных
+
+# Проверка количества запросов пользователя за последние 24 часа
+def check_request_limit(user_id):
+    conn = sqlite3.connect('premiums.db')
+    c = conn.cursor()
+    one_day_ago = time.time() - 24 * 60 * 60  # Время 24 часа назад
+    c.execute('''
+        SELECT COUNT(*) FROM user_requests 
+        WHERE user_id = ? AND request_time > ?
+    ''', (user_id, one_day_ago))
+    count = c.fetchone()[0]
+    
+    if count >= 6:
+        # Находим время первого запроса из последних 6
+        c.execute('''
+            SELECT request_time FROM user_requests 
+            WHERE user_id = ? AND request_time > ?
+            ORDER BY request_time ASC LIMIT 1
+        ''', (user_id, one_day_ago))
+        first_request_time = c.fetchone()[0]
+        reset_time = first_request_time + 24 * 60 * 60
+        remaining_seconds = reset_time - time.time()
+        remaining_hours = int(remaining_seconds // 3600)
+        remaining_minutes = int((remaining_seconds % 3600) // 60)
+        conn.close()
+        return False, f"Превышен лимит запросов (6 в сутки). Пожалуйста, подождите {remaining_hours} часов и {remaining_minutes} минут до следующей попытки."
+    
+    conn.close()
+    return True, ""
+
+# Регистрация запроса пользователя
+def log_request(user_id):
+    conn = sqlite3.connect('premiums.db')
+    c = conn.cursor()
+    c.execute('INSERT INTO user_requests (user_id, request_time) VALUES (?, ?)', (user_id, time.time()))
+    conn.commit()
+    conn.close()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -32,8 +87,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Неверный код. Пожалуйста, введите правильный код (УЗНАТЬ ЕГО МОЖНО У ВАШЕГО ВС/РГ)."
             )
     elif user_states[user_id] == 1:  # Ожидание табельного номера
+        # Проверка лимита запросов
+        is_allowed, error_message = check_request_limit(user_id)
+        if not is_allowed:
+            await update.message.reply_text(error_message)
+            return
+        
         try:
             tab_number = int(user_input)
+            # Регистрируем запрос после успешной проверки табельного номера
+            log_request(user_id)
             premium = get_premium(tab_number)
             
             if premium:
@@ -62,8 +125,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 def main():
-    # Инициализация базы данных
-    init_db()
+    # Инициализация базы данных с учетом лимитов
+    init_db_with_limit()
     
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
